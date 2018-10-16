@@ -18,6 +18,13 @@
 #include "icp_sal_user.h"
 #include "rt_utils.h"
 
+/********************************************************************************/
+
+extern int gDebugParam;
+
+/********************************************************************************/
+
+
 #define TIMEOUT_MS  5000    // 5 seconds
 #define MAX_PATH    1024
 // Function qatMemAllocNUMA can only allocate a contiguous memory with size up
@@ -85,7 +92,6 @@ static pthread_mutex_t gMutex = PTHREAD_MUTEX_INITIALIZER;
 
 /********************************************************************************/
 
-extern int gDebugParam;
 
 /* Source data to encrypt */
 static Cpa8U sampleCipherSrc[] = {
