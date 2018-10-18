@@ -25,4 +25,6 @@ function gen_calgary1G
 test -e calgary3M || gen_calgary3M
 test -e calgary1G || gen_calgary1G
 
+echo "111"
+
 exit 0
