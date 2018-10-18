@@ -15,7 +15,7 @@ function gen_calgary3M
 function gen_calgary1G
 {
     local calgary_sz=$(du calgary3M | awk '{ print $1 }')
-    local nr_repeats=$(($((1*1024*1024)) / calgary_sz))
+    local nr_repeats=$(($((1040000)) / calgary_sz))
 
     for _ in $(seq 1 $nr_repeats); do
         cat calgary3M >> calgary1G
