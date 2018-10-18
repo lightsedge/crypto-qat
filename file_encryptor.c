@@ -216,6 +216,10 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
      * until the callback comes back. If a non-blocking approach was to be
      * used then these variables should be dynamically allocated */
     struct COMPLETION_STRUCT complete;
+    int q = srcLen / bufferSize;
+    int r = srcLen % bufferSize;
+    RT_PRINT_DBG("srcLen / bufferSize = %d, srcLen / bufferSize = %d\n", q, r);
+    if (r != 0) q++;
 
     PRINT_DBG("cpaCyBufferListGetMetaSize\n");
 
@@ -249,17 +253,18 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
 
     if (CPA_STATUS_SUCCESS == status)
     {
-        status = PHYS_CONTIG_ALLOC(&pIvBuffer, sizeof(sampleCipherIv));
+        //status = PHYS_CONTIG_ALLOC(&pIvBuffer, sizeof(sampleCipherIv));
+        status = OS_MALLOC(&pOpData, sizeof(CpaCySymOpData));
     }
     //</snippet>
 
     if (CPA_STATUS_SUCCESS == status)
     {
         /* copy source into buffer */
-        memcpy(pSrcBuffer, sampleCipherSrc, sizeof(sampleCipherSrc));
+        //memcpy(pSrcBuffer, sampleCipherSrc, sizeof(sampleCipherSrc));
 
         /* copy IV into buffer */
-        memcpy(pIvBuffer, sampleCipherIv, sizeof(sampleCipherIv));
+        //memcpy(pIvBuffer, sampleCipherIv, sizeof(sampleCipherIv));
 
         /* increment by sizeof(CpaBufferList) to get at the
          * array of flatbuffers */
@@ -269,14 +274,22 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         pBufferList->numBuffers = 1;
         pBufferList->pPrivateMetaData = pBufferMeta;
 
+        //status = OS_MALLOC(&pOpData, sizeof(CpaCySymOpData));
+    }
+
+
+    unsigned int bytesToEnc, bytesProduced = 0;
+    for (int round = 0, off = 0; round < q; round++, off += bufferSize) {
+        bytesToEnc = (round != q-1) ? bufferSize : srcLen - off;
+        memcpy(pSrcBuffer, src + off, bytesToEnc);
         pFlatBuffer->dataLenInBytes = bufferSize;
         pFlatBuffer->pData = pSrcBuffer;
 
-        status = OS_MALLOC(&pOpData, sizeof(CpaCySymOpData));
-    }
+        
+    //}
 
-    if (CPA_STATUS_SUCCESS == status)
-    {
+    //if (CPA_STATUS_SUCCESS == status)
+    //{
         /*
          * Populate the structure containing the operational data needed
          * to run the algorithm:
@@ -290,12 +303,13 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         //<snippet name="opData">
         pOpData->sessionCtx = sessionCtx;
         pOpData->packetType = CPA_CY_SYM_PACKET_TYPE_FULL;
-        pOpData->pIv = pIvBuffer;
-        pOpData->ivLenInBytes = sizeof(sampleCipherIv);
+        //pOpData->pIv = pIvBuffer;
+        //pOpData->ivLenInBytes = sizeof(sampleCipherIv);
         pOpData->cryptoStartSrcOffsetInBytes = 0;
-        pOpData->messageLenToCipherInBytes = sizeof(sampleCipherSrc);
+        //pOpData->messageLenToCipherInBytes = sizeof(sampleCipherSrc);
+        pOpData->messageLenToCipherInBytes = bytesToEnc;
         //</snippet>
-    }
+    //}
 
     /*
      * Now, we initialize the completion variable which is used by the callback
@@ -303,9 +317,9 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
      * to indicate that the operation is complete.  We then perform the
      * operation.
      */
-    if (CPA_STATUS_SUCCESS == status)
-    {
-        PRINT_DBG("cpaCySymPerformOp\n");
+    //if (CPA_STATUS_SUCCESS == status)
+    //{
+        //PRINT_DBG("cpaCySymPerformOp\n");
 
         //<snippet name="perfOp">
         COMPLETION_INIT(&complete);
@@ -342,7 +356,7 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         /*
          * We now check that the output matches the expected output.
          */
-        if (CPA_STATUS_SUCCESS == status)
+        /*if (CPA_STATUS_SUCCESS == status)
         {
             if (0 == memcmp(pSrcBuffer, expectedOutput, bufferSize))
             {
@@ -353,8 +367,14 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
                 PRINT_DBG("Output does not match expected output\n");
                 status = CPA_STATUS_FAIL;
             }
-        }
+        }*/
+
+        memcpy(dst + off, pSrcBuffer, bytesToEnc);
+        bytesProduced += bytesToEnc;
     }
+
+    dstLen = bytesProduced;
+    assert(dstLen == srcLen);
 
     /*
      * At this stage, the callback function has returned, so it is
