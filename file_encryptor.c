@@ -29,7 +29,7 @@ extern int gDebugParam = 0;
 #define MAX_PATH    1024
 // Function qatMemAllocNUMA can only allocate a contiguous memory with size up
 // to 1MB, otherwise return error.
-#define MAX_HW_BUFSZ    1*1024*1024 // 1 MB
+#define MAX_HW_BUFSZ    1040000 // 1 MB
 #define AES_BLOCKSZ     32          // 32 Bytes (256 bits)
 // The following definition refers to /etc/dh895xcc_dev0.conf: SSL:
 #define MAX_INSTANCES   8
