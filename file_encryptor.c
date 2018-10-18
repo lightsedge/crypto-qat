@@ -149,8 +149,8 @@ void showStats(RunTime *pHead, unsigned int totalBytes)
 
     if (usDiff == 0 || totalBytes == 0) {
         RT_PRINT("Too fast to calculate throughput. Try larger workload or refine this counter.\n");
-        RT_PRINT("%d", totalBytes);
-        RT_PRINT("%f", usDiff);
+        RT_PRINT("%d\n", totalBytes);
+        RT_PRINT("%f\n", usDiff);
         return;
     }
 
@@ -493,6 +493,7 @@ void *workerThreadStart(void *threadArgs)
 
     unsigned int totalBlocks = args->totalBytes / AES_BLOCKSZ;
     // Just check if args->totalBytes is legal: aligned to AES_BLOCKSZ
+
     unsigned int remainingBytes = args->totalBytes % AES_BLOCKSZ;
     assert(remainingBytes == 0);
     unsigned int strideInBlock = totalBlocks / args->nrThread;
@@ -507,7 +508,6 @@ void *workerThreadStart(void *threadArgs)
     unsigned int srcLen = strideInBlock * AES_BLOCKSZ;
     char *dst = args->dst + offInBytes;
     unsigned int dstLen = srcLen;
-
     CHECK(qatAes256EcbEnc(src, srcLen, dst, dstLen, args->isEnc));
 
     return NULL;
