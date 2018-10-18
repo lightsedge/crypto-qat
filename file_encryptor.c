@@ -148,7 +148,8 @@ void showStats(RunTime *pHead, unsigned int totalBytes)
     }
 
     if (usDiff == 0 || totalBytes == 0) {
-        RT_PRINT("Too fast to calculate throughput. Try larger workload or refine this counter.\n")
+        RT_PRINT("Too fast to calculate throughput. Try larger workload or refine this counter.\n");
+        RT_PRINT("%d", totalBytes)
         return;
     }
 
