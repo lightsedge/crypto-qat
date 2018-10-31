@@ -344,7 +344,7 @@ unlock:
     CHECK(PHYS_CONTIG_ALLOC(&sess->ctx, sessionCtxSize));
     // Initialize the Cipher session
     CHECK(cpaCySymInitSession(sess->cyInstHandle,
-                              symCallback,       // callback function
+                              symCallbackAsync,       // callback function
                               &sessionSetupData, // session setup data
                               sess->ctx));       // output of the function
     // \end setup a QAT_AES-256-ECB session
