@@ -58,6 +58,7 @@
 #ifdef DO_CRYPTO
 static sampleThread gPollingThread;
 static int gPollingCy = 0;
+static int numberOfThreads = 0;
 
 #endif
 
@@ -132,6 +133,7 @@ void symSessionWaitForInflightReq(CpaCySymSessionCtx pSessionCtx)
 #ifdef DO_CRYPTO
 static void sal_polling(CpaInstanceHandle cyInstHandle)
 {
+    numberOfThreads = numberOfThreads + 1;
     gPollingCy = 1;
     while (gPollingCy)
     {
@@ -165,7 +167,12 @@ void sampleCyStartPolling(CpaInstanceHandle cyInstHandle)
  * This function stops the polling of a crypto instance.
  */
 #ifdef DO_CRYPTO
-void sampleCyStopPolling(void) { gPollingCy = 0; }
+void sampleCyStopPolling(void) { 
+    numberOfThreads = numberOfThreads - 1;
+    if (!numberOfThreads){
+        gPollingCy = 0; 
+    }
+}
 #endif
 
 /*
