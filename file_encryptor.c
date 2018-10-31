@@ -164,36 +164,20 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
     Cpa32U numBuffers = q;
     RT_PRINT_DBG("\t=> numBuffers = %d\n", numBuffers);
 
-    RunTime *rt = (RunTime *)calloc(1, sizeof(RunTime));
+    
+    //分配 BufferList 并填充其中的 FlatBuffers
+    Cpa32U bufferListMemSize = sizeof(CpaBufferList) + (numBuffers * sizeof(CpaFlatBuffer));
 
-    //准备输入数据
-    // \begin stage #0: prepare input data
-    //gettimeofday(&rt->timeS, NULL);
-
-    // Allocate memory for bufferlist and array of flat buffers in a contiguous
-    // area and carve it up to reduce number of memory allocations required.
-    Cpa32U bufferListMemSize =
-        sizeof(CpaBufferList) + (numBuffers * sizeof(CpaFlatBuffer));
-
-    // Different implementations of the API require different
-    // amounts of space to store meta-data associated with buffer
-    // lists.  We query the API to find out how much space the current
-    // implementation needs, and then allocate space for the buffer
-    // meta data, the buffer list, and for the buffer itself.  We also
-    // allocate memory for the initialization vector.  We then
-    // populate this memory with the required data.
     CHECK(cpaCyBufferListGetMetaSize(cyInstHandle, numBuffers, &bufferMetaSize));
     CHECK(PHYS_CONTIG_ALLOC(&pBufferMeta, bufferMetaSize));
     CHECK(OS_MALLOC(&pBufferList, bufferListMemSize));
     CHECK(OS_MALLOC(&pOpData, sizeof(CpaCySymOpData)));
 
-    // Increment by sizeof(CpaBufferList) to get at the array of flatbuffers.
     pFlatBuffer = (CpaFlatBuffer *)(pBufferList + 1);
     pBufferList->pBuffers = pFlatBuffer;
     pBufferList->numBuffers = numBuffers;
     pBufferList->pPrivateMetaData = pBufferMeta;
 
-    // Copy data in src buffer to DMAble buffer
     CpaFlatBuffer *pFlatBufferIter = pFlatBuffer;
     Cpa32U bufferSize = 0;
     for (unsigned int i = 0, off = 0; i < numBuffers; i++, off += kMaxHwBufferSize) {
@@ -204,22 +188,8 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         pFlatBufferIter++;
     }
 
-    //gettimeofday(&rt->timeE, NULL);
-    //RT_PRINT("Time taken in stage #0: %.3f\n", calInterval(rt));
-    // \end stage #0: prepare input data
-
-    //开始加密
-    // \begin stage #1: consume data
-    //gettimeofday(&rt->timeS, NULL);
-
-    // Populate the structure containing the operational data needed
-    // to run the algorithm:
-    // - packet type information (the algorithm can operate on a full
-    //   packet, perform a partial operation and maintain the state or
-    //   complete the last part of a multi-part operation)
-    // - the initialization vector and its length
-    // - the offset in the source buffer
-    // - the length of the source message
+    //调用 QAT API cpaCySymPerformOp 执行加密操作
+    
     pOpData->sessionCtx = sessionCtx;
     pOpData->packetType = CPA_CY_SYM_PACKET_TYPE_FULL;
     pOpData->cryptoStartSrcOffsetInBytes = 0;
@@ -237,16 +207,10 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
     if (!COMPLETION_WAIT(&complete, TIMEOUT_MS)) {
         RT_PRINT_ERR("Timeout or interruption in cpaCySymPerformOp\n");
         rc = CPA_STATUS_FAIL;
-        goto do_exit;
+        goto cipher_end;
     }
 
-    //gettimeofday(&rt->timeE, NULL);
-    //RT_PRINT("Time taken in stage #1: %.3f\n", calInterval(rt));
-    // \end stage #1: cosume data
-
-    //写回加密结果
-    // \begin stage #2: copy output back
-    //gettimeofday(&rt->timeS, NULL);
+    //将结果拷贝到指定缓冲中并释放 BufferList
 
     pFlatBufferIter = pFlatBuffer;
     for (unsigned int i = 0, off = 0; i < numBuffers; i++, off += kMaxHwBufferSize) {
@@ -256,13 +220,8 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         pFlatBufferIter++;
     }
 
-    //gettimeofday(&rt->timeE, NULL);
-    //RT_PRINT("Time taken in stage #2: %.3f\n", calInterval(rt));
-    // \end stage #2: copy output back
-
-do_exit:
+cipher_end:
     COMPLETION_DESTROY(&complete);
-    // Free all flat buffers
     pFlatBufferIter = pFlatBuffer;
     for (unsigned int i = 0; i < numBuffers; i++) {
         PHYS_CONTIG_FREE(pFlatBufferIter->pData);
