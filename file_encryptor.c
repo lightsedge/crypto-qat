@@ -175,7 +175,7 @@ static void symCallbackAsync(void *pCallbackTag,
     // \end starge 2: copy result back & do post clean
 }
 
-static CpaStatus cipherPerformOpAsync(CpaInstanceHandle cyInstHandle,
+static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
                                       CpaCySymSessionCtx sessionCtx,
                                       char *src, unsigned int srcLen,
                                       char *dst, unsigned int dstLen)
