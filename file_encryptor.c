@@ -1,4 +1,4 @@
-//cipherPerformOp, calInterval
+//cipherPerformOp(TODO#2开始), calInterval
 #include <stdio.h>
 #include <getopt.h>
 #include <string.h>
@@ -113,19 +113,6 @@ void showStats(RunTime *pHead, unsigned int totalBytes)
     RT_PRINT("Throughput:     %9.3lf Mbit/s\n", throughput);
 }
 
-inline double calInterval(RunTime *rt)
-{
-    unsigned long usBegin = 0;
-    unsigned long usEnd   = 0;
-    double usDiff         = 0;
-
-    usBegin = rt->timeS.tv_sec * 1e6 + rt->timeS.tv_usec;
-    usEnd   = rt->timeE.tv_sec * 1e6 + rt->timeE.tv_usec;
-    usDiff  = (usEnd - usBegin);
-
-    return usDiff / 1000;
-}
-
 // Callback function
 //
 // This function is "called back" (invoked by the implementation of
@@ -179,8 +166,9 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
 
     RunTime *rt = (RunTime *)calloc(1, sizeof(RunTime));
 
+    //准备输入数据
     // \begin stage #0: prepare input data
-    gettimeofday(&rt->timeS, NULL);
+    //gettimeofday(&rt->timeS, NULL);
 
     // Allocate memory for bufferlist and array of flat buffers in a contiguous
     // area and carve it up to reduce number of memory allocations required.
@@ -216,12 +204,13 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         pFlatBufferIter++;
     }
 
-    gettimeofday(&rt->timeE, NULL);
-    RT_PRINT("Time taken in stage #0: %.3f\n", calInterval(rt));
+    //gettimeofday(&rt->timeE, NULL);
+    //RT_PRINT("Time taken in stage #0: %.3f\n", calInterval(rt));
     // \end stage #0: prepare input data
 
+    //开始加密
     // \begin stage #1: consume data
-    gettimeofday(&rt->timeS, NULL);
+    //gettimeofday(&rt->timeS, NULL);
 
     // Populate the structure containing the operational data needed
     // to run the algorithm:
@@ -251,12 +240,13 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         goto do_exit;
     }
 
-    gettimeofday(&rt->timeE, NULL);
-    RT_PRINT("Time taken in stage #1: %.3f\n", calInterval(rt));
+    //gettimeofday(&rt->timeE, NULL);
+    //RT_PRINT("Time taken in stage #1: %.3f\n", calInterval(rt));
     // \end stage #1: cosume data
 
+    //写回加密结果
     // \begin stage #2: copy output back
-    gettimeofday(&rt->timeS, NULL);
+    //gettimeofday(&rt->timeS, NULL);
 
     pFlatBufferIter = pFlatBuffer;
     for (unsigned int i = 0, off = 0; i < numBuffers; i++, off += kMaxHwBufferSize) {
@@ -266,8 +256,8 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         pFlatBufferIter++;
     }
 
-    gettimeofday(&rt->timeE, NULL);
-    RT_PRINT("Time taken in stage #2: %.3f\n", calInterval(rt));
+    //gettimeofday(&rt->timeE, NULL);
+    //RT_PRINT("Time taken in stage #2: %.3f\n", calInterval(rt));
     // \end stage #2: copy output back
 
 do_exit:
