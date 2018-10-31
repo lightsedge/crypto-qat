@@ -36,6 +36,10 @@ typedef struct {
 } CmdlineArgs;
 
 typedef struct {
+    char *dst;
+} CallbackArgs;
+
+typedef struct {
     char *src, *dst;
     unsigned int totalBytes;
     int isEnc;
