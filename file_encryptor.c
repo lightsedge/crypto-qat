@@ -137,82 +137,135 @@ static void symCallback(void *pCallbackTag,
     COMPLETE((struct COMPLETION_STRUCT *)pCallbackTag);
 }
 
-static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
-                                 CpaCySymSessionCtx sessionCtx,
-                                 char *src, unsigned int srcLen,
-                                 char *dst, unsigned int dstLen)
+static void symCallbackAsync(void *pCallbackTag,
+                             CpaStatus status,
+                             const CpaCySymOp operationType,
+                             void *pOpData_,
+                             CpaBufferList *pDstBuffer,
+                             CpaBoolean verifyResult)
+{
+    RT_PRINT_DBG("Callback called with status = %d.\n", status);
+    CallbackArgs *cbArgs = (CallbackArgs *)pCallbackTag;
+    CpaCySymOpData *pOpData = (CpaCySymOpData *)pOpData_;
+
+    // \begin stage 2: copy result back & do post clean
+    for (unsigned int i = 0, off = 0; i < pDstBuffer->numBuffers;
+            i++, off += ((pDstBuffer->pBuffers)+i)->dataLenInBytes) {
+        if (off + ((pDstBuffer->pBuffers)+i)->dataLenInBytes >
+                pOpData->messageLenToCipherInBytes) {
+            memcpy((cbArgs->dst)+off, ((pDstBuffer->pBuffers)+i)->pData,
+                    pOpData->messageLenToCipherInBytes - off);
+            off += (pOpData->messageLenToCipherInBytes - off);
+            break;
+        }
+        memcpy((cbArgs->dst)+off, ((pDstBuffer->pBuffers)+i)->pData,
+                ((pDstBuffer->pBuffers)+i)->dataLenInBytes);
+    }
+
+    // Do post clean
+    PHYS_CONTIG_FREE(pDstBuffer->pPrivateMetaData);
+    for (int i = 0; i < pDstBuffer->numBuffers; i++)
+        PHYS_CONTIG_FREE(((pDstBuffer->pBuffers)+i)->pData);
+    OS_FREE(pDstBuffer);
+    OS_FREE(pOpData);
+    // \end starge 2: copy result back & do post clean
+}
+
+static CpaStatus cipherPerformOpAsync(CpaInstanceHandle cyInstHandle,
+                                      CpaCySymSessionCtx sessionCtx,
+                                      char *src, unsigned int srcLen,
+                                      char *dst, unsigned int dstLen)
 {
     CpaStatus rc = CPA_STATUS_SUCCESS;
 
-    // TODO #2: This function performs a cipher operation and is critical to encryption's
-    // performance. Please implement it as efficient as possible. Your can refer
-    // to ./cpa_cipher_sample.c.
+    const unsigned int kMaxHwBufferSize = MAX_HW_BUFSZ;
+    const unsigned int numBuffers = 1;
 
-    Cpa8U *pBufferMeta = NULL;
-    Cpa32U bufferMetaSize = 0;
-    CpaBufferList *pBufferList = NULL;
-    CpaFlatBuffer *pFlatBuffer = NULL;
-    CpaCySymOpData *pOpData = NULL;
-    Cpa32U bufferSize = MAX_HW_BUFSZ;
-    Cpa32U numBuffers = 1;  //和一次分配不同, 复用同一块FlatBuffer
-
-    //分配 BufferList 并填充其中的 FlatBuffers
-    Cpa32U bufferListMemSize = sizeof(CpaBufferList) + (numBuffers * sizeof(CpaFlatBuffer));
-    Cpa8U *pSrcBuffer = NULL;
-
-    CHECK(cpaCyBufferListGetMetaSize(cyInstHandle, numBuffers, &bufferMetaSize));
-    CHECK(PHYS_CONTIG_ALLOC(&pBufferMeta, bufferMetaSize));
-    CHECK(OS_MALLOC(&pBufferList, bufferListMemSize));
-    CHECK(PHYS_CONTIG_ALLOC(&pSrcBuffer, bufferSize));
-    CHECK(OS_MALLOC(&pOpData, sizeof(CpaCySymOpData)));
-
-    pFlatBuffer = (CpaFlatBuffer *)(pBufferList + 1);
-    pBufferList->pBuffers = pFlatBuffer;
-    pBufferList->numBuffers = 1;
-    pBufferList->pPrivateMetaData = pBufferMeta;
-
-    //先计算循环次数, 每次循环先调用 QAT API cpaCySymPerformOp 执行加密操作, 再将结果拷贝到指定缓冲中
-    struct COMPLETION_STRUCT complete;
-    int q = srcLen / bufferSize;
-    int r = srcLen % bufferSize;
+    unsigned int bufferSize = numBuffers * kMaxHwBufferSize;
+    RT_PRINT_DBG("@bufferSize = %d\n", bufferSize);
+    unsigned int q = srcLen / bufferSize;
+    unsigned int r = srcLen % bufferSize;
+    RT_PRINT_DBG("@srcLen / bufferSize = %d, @srcLen // bufferSize = %d\n", q, r)
     if (r != 0) q++;
+    RT_PRINT_DBG("\t => round = %d\n", q);
 
-    unsigned int bytesToEnc, bytesProduced = 0;
-    for (int round = 0, off = 0; round < q; round++, off += bufferSize) {
-        bytesToEnc = (round != q-1) ? bufferSize : srcLen - off;
-        memcpy(pSrcBuffer, src + off, bytesToEnc);
-        pFlatBuffer->pData = pSrcBuffer;
-        pFlatBuffer->dataLenInBytes = bufferSize;
+    unsigned int off = 0;
+    for (unsigned int i = 0; i < q; i++) {
 
+        RT_PRINT_DBG("@q = %d, @i = %d\n", q, i);
+
+        CallbackArgs *cbArgs = (CallbackArgs *)calloc(1, sizeof(CallbackArgs));
+        cbArgs->dst = dst + off;
+
+        // \begin stage 0: alloc buffer & copy data to input buffer
+        Cpa8U *pBufferMeta = NULL;
+        Cpa32U bufferMetaSize = 0;
+        CpaBufferList *pBufferList = NULL;
+        CpaFlatBuffer *pFlatBuffer = NULL;
+        CpaCySymOpData *pOpData = NULL;
+        Cpa32U bufferListMemSize =
+            sizeof(CpaBufferList) + (numBuffers * sizeof(CpaFlatBuffer));
+
+        RT_PRINT_DBG("CP#0\n");
+
+        CHECK(cpaCyBufferListGetMetaSize(cyInstHandle, numBuffers, &bufferMetaSize));
+        CHECK(PHYS_CONTIG_ALLOC(&pBufferMeta, bufferMetaSize));
+        CHECK(OS_MALLOC(&pBufferList, bufferListMemSize));
+        CHECK(OS_MALLOC(&pOpData, sizeof(CpaCySymOpData)));
+
+        RT_PRINT_DBG("CP#1\n");
+
+        // Increment by sizeof(CpaBufferList) to get at the array of flatbuffers.
+        pFlatBuffer = (CpaFlatBuffer *)(pBufferList + 1);
+        for (int j = 0; j < numBuffers; j++) {
+            CHECK(PHYS_CONTIG_ALLOC(&((pFlatBuffer + j)->pData), kMaxHwBufferSize));
+            (pFlatBuffer + j)->dataLenInBytes = kMaxHwBufferSize;
+        }
+        pBufferList->pBuffers = pFlatBuffer;
+        pBufferList->numBuffers = numBuffers;
+        pBufferList->pPrivateMetaData = pBufferMeta;
+
+        RT_PRINT_DBG("CP#2\n");
+
+        // Do copy
+        unsigned int bytesToEnc = 0;
+        for (int j = 0; j < numBuffers; j++, off += kMaxHwBufferSize) {
+            RT_PRINT_DBG("@q = %d, @i = %d, @j = %d\n", q, i, j);
+            // Break if meets the last fragement
+            if (off + kMaxHwBufferSize > srcLen) {
+                RT_PRINT_DBG("dataLen = %d, bytesToCopy = %d\n",
+                        (pFlatBuffer + j)->dataLenInBytes, srcLen - off);
+                memcpy((pFlatBuffer + j)->pData, src + off, srcLen - off);
+                bytesToEnc += (srcLen - off);
+                off += (srcLen - off);
+                break;
+            }
+            RT_PRINT_DBG("dataLen = %d, bytesToCopy = %d\n",
+                    (pFlatBuffer + j)->dataLenInBytes, kMaxHwBufferSize);
+            memcpy((pFlatBuffer + j)->pData, src + off, kMaxHwBufferSize);
+            bytesToEnc += kMaxHwBufferSize;
+        }
+
+        RT_PRINT_DBG("CP#3\n");
+
+        // \end stage 0: alloc buffer & copy data to input buffer
+
+        // \begin stage 1: call QAT API to do encrypt
         pOpData->sessionCtx = sessionCtx;
         pOpData->packetType = CPA_CY_SYM_PACKET_TYPE_FULL;
         pOpData->cryptoStartSrcOffsetInBytes = 0;
         pOpData->messageLenToCipherInBytes = bytesToEnc;
-
-        COMPLETION_INIT(&complete);
         CHECK(cpaCySymPerformOp(cyInstHandle,
-                                (void *)&complete,  // data sent as is to the callback function
+                                (void *)cbArgs,     // data sent as is to the callback function
                                 pOpData,            // operational data struct
                                 pBufferList,        // source buffer list
                                 pBufferList,        // same src & dst for an in-place operation
                                 NULL));
-        if (!COMPLETION_WAIT(&complete, TIMEOUT_MS)) {
-            RT_PRINT_ERR("Timeout or interruption in cpaCySymPerformOp\n");
-            rc = CPA_STATUS_FAIL;
-            break;
-        }
-        memcpy(dst + off, pSrcBuffer, bytesToEnc);
-        bytesProduced += bytesToEnc;
+        // \end stage 1: call QAT API to do encrypt
+        //
+        RT_PRINT_DBG("CP#4\n");
     }
-    dstLen = bytesProduced;
-    assert(dstLen == srcLen);
-
-    //释放 BufferList
-    COMPLETION_DESTROY(&complete);
-    PHYS_CONTIG_FREE(pSrcBuffer);
-    PHYS_CONTIG_FREE(pBufferMeta);
-    OS_FREE(pBufferList);
-    OS_FREE(pOpData);
+    assert(off == srcLen);
 
     return rc;
 }
