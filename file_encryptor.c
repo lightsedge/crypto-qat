@@ -211,13 +211,11 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
         unsigned int bytesToEnc = 0;
         for (int j = 0; j < numBuffers; j++, off += kMaxHwBufferSize) {
             if (off + kMaxHwBufferSize > srcLen) {
-                        (pFlatBuffer + j)->dataLenInBytes, srcLen - off);
                 memcpy((pFlatBuffer + j)->pData, src + off, srcLen - off);
                 bytesToEnc += (srcLen - off);
                 off += (srcLen - off);
                 break;
             }
-                    (pFlatBuffer + j)->dataLenInBytes, kMaxHwBufferSize);
             memcpy((pFlatBuffer + j)->pData, src + off, kMaxHwBufferSize);
             bytesToEnc += kMaxHwBufferSize;
         }
