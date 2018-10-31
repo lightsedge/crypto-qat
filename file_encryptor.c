@@ -153,14 +153,26 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
     CpaBufferList *pBufferList = NULL;
     CpaFlatBuffer *pFlatBuffer = NULL;
     CpaCySymOpData *pOpData = NULL;
-    Cpa32U bufferSize = MAX_HW_BUFSZ;
-    Cpa32U numBuffers = 1;  // Only use 1 buffer in this case
+
+    const unsigned int kMaxHwBufferSize = MAX_HW_BUFSZ;         // 1 MB
+    const unsigned int kMaxSwBufferSize = 512 * 1024 * 1024;    // 512 MB
+
+    unsigned int q = srcLen / kMaxHwBufferSize;
+    unsigned int r = srcLen % kMaxHwBufferSize;
+    RT_PRINT_DBG("srcLen / kMaxHwBufferSize = %d, srcLen // kMaxHwBufferSize = %d\n", q, r);
+    if (r != 0) q++;
+    Cpa32U numBuffers = q;
+    RT_PRINT_DBG("\t=> numBuffers = %d\n", numBuffers);
+
+    RunTime *rt = (RunTime *)calloc(1, sizeof(RunTime));
+
+    // \begin stage #0: prepare input data
+    gettimeofday(&rt->timeS, NULL);
 
     // Allocate memory for bufferlist and array of flat buffers in a contiguous
     // area and carve it up to reduce number of memory allocations required.
     Cpa32U bufferListMemSize =
         sizeof(CpaBufferList) + (numBuffers * sizeof(CpaFlatBuffer));
-    Cpa8U *pSrcBuffer = NULL;
 
     // Different implementations of the API require different
     // amounts of space to store meta-data associated with buffer
@@ -172,65 +184,87 @@ static CpaStatus cipherPerformOp(CpaInstanceHandle cyInstHandle,
     CHECK(cpaCyBufferListGetMetaSize(cyInstHandle, numBuffers, &bufferMetaSize));
     CHECK(PHYS_CONTIG_ALLOC(&pBufferMeta, bufferMetaSize));
     CHECK(OS_MALLOC(&pBufferList, bufferListMemSize));
-    CHECK(PHYS_CONTIG_ALLOC(&pSrcBuffer, bufferSize));
     CHECK(OS_MALLOC(&pOpData, sizeof(CpaCySymOpData)));
 
     // Increment by sizeof(CpaBufferList) to get at the array of flatbuffers.
     pFlatBuffer = (CpaFlatBuffer *)(pBufferList + 1);
     pBufferList->pBuffers = pFlatBuffer;
-    pBufferList->numBuffers = 1;
+    pBufferList->numBuffers = numBuffers;
     pBufferList->pPrivateMetaData = pBufferMeta;
 
-    // \begin consume data block by block whose size is MAX_HW_BUFSZ
-    struct COMPLETION_STRUCT complete;
-    int q = srcLen / bufferSize;
-    int r = srcLen % bufferSize;
-    RT_PRINT_DBG("srcLen / bufferSize = %d, srcLen / bufferSize = %d\n", q, r);
-    if (r != 0) q++;
-
-    unsigned int bytesToEnc, bytesProduced = 0;
-    for (int round = 0, off = 0; round < q; round++, off += bufferSize) {
-        bytesToEnc = (round != q-1) ? bufferSize : srcLen - off;
-        memcpy(pSrcBuffer, src + off, bytesToEnc);
-        pFlatBuffer->pData = pSrcBuffer;
-        pFlatBuffer->dataLenInBytes = bufferSize;
-
-        // Populate the structure containing the operational data needed
-        // to run the algorithm:
-        // - packet type information (the algorithm can operate on a full
-        //   packet, perform a partial operation and maintain the state or
-        //   complete the last part of a multi-part operation)
-        // - the initialization vector and its length
-        // - the offset in the source buffer
-        // - the length of the source message
-        pOpData->sessionCtx = sessionCtx;
-        pOpData->packetType = CPA_CY_SYM_PACKET_TYPE_FULL;
-        pOpData->cryptoStartSrcOffsetInBytes = 0;
-        pOpData->messageLenToCipherInBytes = bytesToEnc;
-
-        COMPLETION_INIT(&complete);
-        RT_PRINT_DBG("Round %d (%d): %d bytes in\n", round, q, bytesToEnc);
-        CHECK(cpaCySymPerformOp(cyInstHandle,
-                                (void *)&complete,  // data sent as is to the callback function
-                                pOpData,            // operational data struct
-                                pBufferList,        // source buffer list
-                                pBufferList,        // same src & dst for an in-place operation
-                                NULL));
-        RT_PRINT_DBG("Wait for completion\n");
-        if (!COMPLETION_WAIT(&complete, TIMEOUT_MS)) {
-            RT_PRINT_ERR("Timeout or interruption in cpaCySymPerformOp\n");
-            rc = CPA_STATUS_FAIL;
-            break;
-        }
-        RT_PRINT_DBG("Round %d (%d): %d bytes out\n", round, q, bytesToEnc);
-        memcpy(dst + off, pSrcBuffer, bytesToEnc);
-        bytesProduced += bytesToEnc;
+    // Copy data in src buffer to DMAble buffer
+    CpaFlatBuffer *pFlatBufferIter = pFlatBuffer;
+    Cpa32U bufferSize = 0;
+    for (unsigned int i = 0, off = 0; i < numBuffers; i++, off += kMaxHwBufferSize) {
+        bufferSize = (i != numBuffers-1) ? kMaxHwBufferSize : srcLen - off;
+        CHECK(PHYS_CONTIG_ALLOC(&(pFlatBufferIter->pData), bufferSize));
+        pFlatBufferIter->dataLenInBytes = bufferSize;
+        memcpy(pFlatBufferIter->pData, src + off, bufferSize);
+        pFlatBufferIter++;
     }
-    dstLen = bytesProduced;
-    assert(dstLen == srcLen);
 
+    gettimeofday(&rt->timeE, NULL);
+    RT_PRINT("Time taken in stage #0: %.3f\n", calInterval(rt));
+    // \end stage #0: prepare input data
+
+    // \begin stage #1: consume data
+    gettimeofday(&rt->timeS, NULL);
+
+    // Populate the structure containing the operational data needed
+    // to run the algorithm:
+    // - packet type information (the algorithm can operate on a full
+    //   packet, perform a partial operation and maintain the state or
+    //   complete the last part of a multi-part operation)
+    // - the initialization vector and its length
+    // - the offset in the source buffer
+    // - the length of the source message
+    pOpData->sessionCtx = sessionCtx;
+    pOpData->packetType = CPA_CY_SYM_PACKET_TYPE_FULL;
+    pOpData->cryptoStartSrcOffsetInBytes = 0;
+    pOpData->messageLenToCipherInBytes = srcLen;
+
+    struct COMPLETION_STRUCT complete;
+    COMPLETION_INIT(&complete);
+    CHECK(cpaCySymPerformOp(cyInstHandle,
+                            (void *)&complete,  // data sent as is to the callback function
+                            pOpData,            // operational data struct
+                            pBufferList,        // source buffer list
+                            pBufferList,        // same src & dst for an in-place operation
+                            NULL));
+    RT_PRINT_DBG("Wait for completion\n");
+    if (!COMPLETION_WAIT(&complete, TIMEOUT_MS)) {
+        RT_PRINT_ERR("Timeout or interruption in cpaCySymPerformOp\n");
+        rc = CPA_STATUS_FAIL;
+        goto do_exit;
+    }
+
+    gettimeofday(&rt->timeE, NULL);
+    RT_PRINT("Time taken in stage #1: %.3f\n", calInterval(rt));
+    // \end stage #1: cosume data
+
+    // \begin stage #2: copy output back
+    gettimeofday(&rt->timeS, NULL);
+
+    pFlatBufferIter = pFlatBuffer;
+    for (unsigned int i = 0, off = 0; i < numBuffers; i++, off += kMaxHwBufferSize) {
+        RT_PRINT_DBG("@i = %d, @numBuffers = %d\n", i, numBuffers);
+        bufferSize = (i != numBuffers-1) ? kMaxHwBufferSize : srcLen - off;
+        memcpy(dst + off, pFlatBufferIter->pData, bufferSize);
+        pFlatBufferIter++;
+    }
+
+    gettimeofday(&rt->timeE, NULL);
+    RT_PRINT("Time taken in stage #2: %.3f\n", calInterval(rt));
+    // \end stage #2: copy output back
+
+do_exit:
     COMPLETION_DESTROY(&complete);
-    PHYS_CONTIG_FREE(pSrcBuffer);
+    // Free all flat buffers
+    pFlatBufferIter = pFlatBuffer;
+    for (unsigned int i = 0; i < numBuffers; i++) {
+        PHYS_CONTIG_FREE(pFlatBufferIter->pData);
+        pFlatBufferIter++;
+    }
     PHYS_CONTIG_FREE(pBufferMeta);
     OS_FREE(pBufferList);
     OS_FREE(pOpData);
