@@ -1,4 +1,4 @@
-
+//cipherPerformOp, calInterval
 #include <stdio.h>
 #include <getopt.h>
 #include <string.h>
@@ -111,6 +111,19 @@ void showStats(RunTime *pHead, unsigned int totalBytes)
 
     RT_PRINT("Time taken:     %9.3lf ms\n", usDiff / 1000);
     RT_PRINT("Throughput:     %9.3lf Mbit/s\n", throughput);
+}
+
+inline double calInterval(RunTime *rt)
+{
+    unsigned long usBegin = 0;
+    unsigned long usEnd   = 0;
+    double usDiff         = 0;
+
+    usBegin = rt->timeS.tv_sec * 1e6 + rt->timeS.tv_usec;
+    usEnd   = rt->timeE.tv_sec * 1e6 + rt->timeE.tv_usec;
+    usDiff  = (usEnd - usBegin);
+
+    return usDiff / 1000;
 }
 
 // Callback function
